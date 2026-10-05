@@ -1,0 +1,38 @@
+# No ROMs, and nothing extracted from one, ever enters this repository.
+*.nes
+*.gb
+*.gbc
+*.sfc
+*.smc
+*.gba
+*.z64
+*.iso
+*.gcm
+*.rvz
+*.srm
+*.sav
+baserom*
+
+# The fleet list also excludes *.md, which on this project would hide STATUS.md
+# and README.md -- Mega Drive ROMs and Markdown share an extension. Exclude the
+# Mega Drive case narrowly instead, and re-include the docs explicitly below.
+*.bin
+!README.md
+!STATUS.md
+!notes/*.md
+
+# Upstream clone and build output. The decomp tree is ~220 MB and is not
+# vendored; tools/setup.sh clones it at the pinned revision.
+upstream/
+web/dist/
+web/test/core-node.js
+web/test/core-node.wasm
+web/out/
+web/out-run.log
+out/
+__pycache__/
+*.pyc
+
+# Build products of the decomp, in case anyone builds in-tree.
+*.elf
+*.map

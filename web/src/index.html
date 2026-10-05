@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--
+  The Content-Security-Policy below is the actual boundary that keeps the
+  player's ROM on their machine. It is not decoration and it is not advice.
+
+    connect-src 'none'   fetch(), XMLHttpRequest, WebSocket, EventSource and
+                         navigator.sendBeacon are refused by the browser, to
+                         EVERY origin including this one. There is no code path
+                         out of this page, so "the ROM is never uploaded" is
+                         enforced by the user agent rather than promised by us.
+    default-src 'none'   nothing loads unless named below.
+    script-src           'self' plus 'wasm-unsafe-eval', which permits
+                         WebAssembly compilation and NOT JavaScript eval. Note
+                         there is no 'unsafe-inline': every line of script on
+                         this page lives in app.js, and the wasm is base64'd
+                         into pokeleafgreen.js precisely so that loading it
+                         needs no fetch and connect-src can stay at 'none'.
+    img-src              'self' data: blob: — for the canvas' own toDataURL in
+                         the self-test. No remote images.
+    style-src            'self' 'unsafe-inline' for the stylesheet below. Inline
+                         CSS cannot reach the network here: url() loads are
+                         governed by img-src/font-src, both of which are local.
+
+  A previous page in this fleet wrapped window.fetch to block uploads. That is
+  weaker: any later script can delete the wrapper, and it has to be installed
+  before anything else runs. CSP is checked by the browser on every request and
+  cannot be removed by page script.
+-->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' 'wasm-unsafe-eval';
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob:;
+  connect-src 'none';
+  font-src 'none';
+  media-src 'none';
+  object-src 'none';
+  frame-src 'none';
+  worker-src 'none';
+  child-src 'none';
+  base-uri 'none';
+  form-action 'none'">
+<title>Pokémon LeafGreen</title>
+<style>
+  :root { --bg:#101a13; --panel:#16231b; --fg:#e8f0e6; --dim:#8ba193; --accent:#4caf50; --ok:#6fdc8c; --warn:#e0c23a; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); overflow:hidden;
+    font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; -webkit-text-size-adjust:100%; }
+  /* Column layout rather than an overlaid HUD: a bar on top of the bottom of
+     the screen sits exactly where the game puts its dialogue box. */
+  body { display:flex; flex-direction:column; }
+  #wrap { flex:1 1 auto; min-height:0; display:flex; align-items:center; justify-content:center; padding:4px; }
+  /* width/height:auto would leave the canvas at its intrinsic 240x160. Filling
+     the box and letting object-fit letterbox it keeps 3:2 while scaling up. */
+  canvas { display:block; background:#000; image-rendering:pixelated;
+    width:100%; height:100%; object-fit:contain; }
+  #overlay { position:fixed; inset:0; z-index:50; display:flex; flex-direction:column; gap:18px;
+    align-items:center; justify-content:center; background:rgba(16,26,19,.97); padding:24px; text-align:center; }
+  #overlay.hidden { display:none; }
+  h1 { margin:0; font-size:clamp(20px,5vw,30px); letter-spacing:.01em; }
+  .sub { margin:0; color:var(--dim); max-width:60ch; }
+  .sub a { color:#8fd49b; }
+  #pick { background:var(--panel); border:2px dashed #2c4535; border-radius:14px; padding:26px 34px;
+    cursor:pointer; max-width:62ch; transition:border-color .15s, background .15s; }
+  #pick:hover,#pick.drag { border-color:var(--accent); background:#1b3022; }
+  #pick b { display:block; font-size:16px; margin-bottom:6px; }
+  #pick .hint { color:var(--dim); font-size:12.5px; }
+  #rom-file { display:none; }
+  .note { color:var(--dim); font-size:12.5px; max-width:62ch; }
+  .note strong { color:var(--fg); font-weight:600; }
+  #err { color:#ff8b7b; min-height:1.4em; }
+  #hud { flex:0 0 auto; display:flex; gap:10px; flex-wrap:wrap;
+    align-items:center; justify-content:center; padding:7px 12px; background:#0b120d;
+    border-top:1px solid #1e2b22; color:var(--dim); font-size:12px; }
+  #hud button { background:var(--panel); color:var(--fg); border:1px solid #2c4535; border-radius:7px;
+    padding:5px 11px; font:inherit; cursor:pointer; }
+  #hud button:hover { border-color:var(--accent); }
+  #hud .sep { opacity:.4; }
+  #mutebtn.muted { color:var(--warn); }
+  #savedot { color:var(--ok); opacity:0; transition:opacity .3s; }
+  #savedot.on { opacity:1; }
+  kbd { border:1px solid #3a5444; border-bottom-width:2px; border-radius:4px; padding:0 5px;
+    font:11.5px ui-monospace,monospace; color:var(--fg); }
+  @media (max-width:760px) { #hud .deskonly { display:none; } }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="canvas" width="240" height="160" tabindex="-1"></canvas></div>
+
+<div id="overlay">
+  <h1>Pokémon LeafGreen</h1>
+  <p class="sub">Built from the <a href="https://github.com/pret/pokefirered">pret/pokefirered</a>
+     decompilation, running on a WebAssembly build of mGBA's core.</p>
+  <div id="pick">
+    <b>Choose your LeafGreen ROM</b>
+    <span class="hint">click here, or drag the file in &middot; .gba, 16&nbsp;MB</span>
+  </div>
+  <input id="rom-file" type="file" accept=".gba,.bin">
+  <p class="note"><strong>Your ROM stays on this device.</strong> It is read into memory by the
+     browser's own file reader and kept in this page's local storage so you don't have to pick it
+     again. This page is static files with no server behind it, and its Content-Security-Policy
+     sets <code>connect-src 'none'</code> &mdash; the browser itself refuses to let the page make
+     any network request at all.</p>
+  <p id="err"></p>
+</div>
+
+<div id="hud">
+  <span id="stat">loading…</span>
+  <span class="sep">|</span>
+  <button id="mutebtn" class="muted">🔇 muted — click for sound</button>
+  <button id="savebtn">save state</button>
+  <button id="loadbtn">load state</button>
+  <button id="forget">forget ROM</button>
+  <span id="savedot">● saved</span>
+  <span class="sep deskonly">|</span>
+  <!-- Z is A and X is B, matching MAP in app.js. The inherited version of this
+       bar had them the other way round; a screenshot of the running page is
+       what caught it, because nothing in the test suite reads the legend. -->
+  <span class="deskonly"><kbd>Z</kbd> A &middot; <kbd>X</kbd> B &middot; <kbd>↵</kbd> Start &middot;
+    <kbd>⇧</kbd> Select &middot; arrows &middot; <kbd>A</kbd>/<kbd>S</kbd> L/R</span>
+</div>
+
+<script src="pokeleafgreen.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
